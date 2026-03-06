@@ -48,6 +48,10 @@ class AttentionKwargs(TypedDict, total=False):
     The attention kwargs to be passed to fms model forward.
 
     attn_name: str
+    layer_idx: int
+    kv_probe_ready: NotRequired[torch.Tensor | None]
+    kv_probe_coverage: NotRequired[torch.Tensor | None]
+    kv_probe_phase: NotRequired[torch.Tensor | None]
         this is the name corresponding to the attention op registered in register_attention_op
     """
 
@@ -799,7 +803,17 @@ class MultiHeadAttention(nn.Module):
                 queries, keys, position_ids, past_key_value_state, use_cache
             )
 
-        attn_compute_dict = get_attention_type(**attn_kwargs)
+        layer_idx = getattr(self, "layer_idx", None)
+        dispatch_attn_kwargs: AttentionKwargs
+        if layer_idx is None:
+            dispatch_attn_kwargs = attn_kwargs
+        else:
+            dispatch_attn_kwargs = {
+                **attn_kwargs,
+                "layer_idx": layer_idx,
+            }
+
+        attn_compute_dict = get_attention_type(**dispatch_attn_kwargs)
 
         if use_cache:
             if past_key_value_state is None:
@@ -811,7 +825,7 @@ class MultiHeadAttention(nn.Module):
                     values,
                     past_key_value_state[0],
                     past_key_value_state[1],
-                    **attn_kwargs,
+                    **dispatch_attn_kwargs,
                 )
             )
         else:
@@ -823,10 +837,10 @@ class MultiHeadAttention(nn.Module):
             updated_attn_kwargs = {
                 "sinks": self.sinks,
                 "sliding_window": sliding_window,
-                **attn_kwargs,
+                **dispatch_attn_kwargs,
             }
         else:
-            updated_attn_kwargs = attn_kwargs
+            updated_attn_kwargs = dispatch_attn_kwargs
 
         if attn_compute_dict["is_prefill"](**updated_attn_kwargs):
             attn = attn_compute_dict["compute_prefill"](

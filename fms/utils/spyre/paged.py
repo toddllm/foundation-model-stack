@@ -1,5 +1,6 @@
 import math
 from typing import List, Optional, Tuple
+from typing_extensions import NotRequired
 
 from fms.modules.attention import (
     AttentionKwargs,
@@ -140,6 +141,10 @@ class SpyrePagedAttentionKwargs(AttentionKwargs):
     block_table: Optional[torch.Tensor]
     slot_mapping: torch.Tensor
     mask: Optional[torch.Tensor]  # prefill mask
+    layer_idx: NotRequired[int]
+    kv_probe_ready: NotRequired[Optional[torch.Tensor]]
+    kv_probe_coverage: NotRequired[Optional[torch.Tensor]]
+    kv_probe_phase: NotRequired[Optional[torch.Tensor]]
 
 
 def __spyre_paged_store_op(
@@ -152,6 +157,18 @@ def __spyre_paged_store_op(
     result_key_cache, result_value_cache = torch.ops.spyre.paged_attn_store(
         keys, values, key_cache, value_cache, attn_kwargs["slot_mapping"]
     )
+
+    layer_idx = attn_kwargs.get("layer_idx", None)
+    ready = attn_kwargs.get("kv_probe_ready", None)
+    coverage = attn_kwargs.get("kv_probe_coverage", None)
+    phase = attn_kwargs.get("kv_probe_phase", None)
+    if layer_idx is not None and layer_idx >= 0:
+        if ready is not None:
+            ready[layer_idx] = 1
+        if coverage is not None:
+            coverage[layer_idx] = keys.shape[1]
+        if phase is not None:
+            phase[layer_idx] = 0 if attn_kwargs.get("block_table", None) is None else 1
 
     # for prefill, we want to return the original keys/values
     if attn_kwargs.get("block_table", None) is None:
